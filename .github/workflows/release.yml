@@ -14,6 +14,8 @@ concurrency:
 jobs:
   release-please:
     name: Release Please
+    # Source-only forks must explicitly configure release permissions and registries.
+    if: vars.HUREA_RELEASE_AUTOMATION_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -14,6 +15,24 @@ const readmes = [
 ] as const;
 
 describe("release configuration", () => {
+  it("requires explicit opt-in before running release automation", async () => {
+    const workflow: unknown = parse(
+      await readFile(".github/workflows/release.yml", "utf8"),
+    );
+    expect(workflow).toMatchObject({
+      on: { push: { branches: ["main"] } },
+      jobs: {
+        "release-please": {
+          if: "vars.HUREA_RELEASE_AUTOMATION_ENABLED == 'true'",
+        },
+        publish: {
+          needs: "release-please",
+          if: "needs.release-please.outputs.release_created == 'true'",
+        },
+      },
+    });
+  });
+
   it("updates every package-version artifact in release PRs", async () => {
     const configuration = await readJson("release-please-config.json");
 

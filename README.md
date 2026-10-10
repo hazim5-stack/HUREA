@@ -222,6 +222,20 @@ HUREA is a layered ESM TypeScript application. CLI and MCP adapters converge on 
 
 See the [architecture map](docs/architecture.mermaid) and [tool design guide](docs/tool-design.md).
 
+## Source package version
+
+The source checkout currently identifies its package as:
+
+<!-- x-release-please-start-version -->
+
+```text
+hurea-agents@3.2.1
+```
+
+<!-- x-release-please-end -->
+
+This is the source package identity, not a claim that it is published on npm.
+
 ## Verification and support status
 
 The supplied extension verification record reports **32 Python tests and 58 Vitest tests**, plus successful build, fast checks, and documentation checks. These are focused checks, not a claim that the full suite or live external providers passed.
@@ -234,6 +248,13 @@ npm run check:fast
 npm run test:extensions
 npm run check:pr
 ```
+
+Release automation is opt-in for this fork. To enable it, set the repository
+Actions variable `HUREA_RELEASE_AUTOMATION_ENABLED` to `true` and configure
+permission for Actions to create pull requests (or a dedicated
+`RELEASE_PLEASE_TOKEN` with the required access). npm/MCP publication also needs
+its own registry configuration; the source package remains private until explicitly
+prepared for publication. Regular CI continues to run on updates.
 
 Read the [verification record](docs/EXTENSIONS_VALIDATION.md) and [testing guide](docs/testing.md) before relying on a provider-specific claim.
 
