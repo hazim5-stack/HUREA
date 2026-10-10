@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.0](https://github.com/hazim5-stack/HUREA/compare/hurea-agents-3.2.1...hurea-agents-3.3.0) (2026-10-10)
+
+
+### Features
+
+* publish HUREA source and premium evidence-driven documentation ([e552730](https://github.com/hazim5-stack/HUREA/commit/e552730f8be493f37bd2e07158de05502b35e2fd))
+
 ## [3.2.1](https://github.com/morluto/rea/compare/hurea-agents-3.2.0...hurea-agents-3.2.1) (2026-10-03)
 
 

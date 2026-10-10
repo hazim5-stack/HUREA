@@ -186,7 +186,7 @@ Setup 会检测 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Win
   "mcpServers": {
     "hurea": {
       "command": "npx",
-      "args": ["-y", "hurea-agents@3.2.1", "mcp"]
+      "args": ["-y", "hurea-agents@3.3.0", "mcp"]
     }
   }
 }
