@@ -1,0 +1,105 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+
+describe("client registration status", () => {
+  it("distinguishes aligned, stale, missing, and invalid registrations", async () => {
+    const home = await createTestTempDirectory("hurea-registrations-");
+    await Promise.all([
+      mkdir(join(home, ".codex")),
+      mkdir(join(home, ".cursor")),
+      mkdir(join(home, ".gemini")),
+      mkdir(join(home, ".claude")),
+    ]);
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      `[mcp_servers.hurea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\n`,
+    );
+    await writeFile(
+      join(home, ".cursor/mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          hurea: { command: "/old/hurea", args: ["mcp"], env: { SECRET: "x" } },
+        },
+      }),
+    );
+    await writeFile(join(home, ".gemini/settings.json"), "not-json");
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/hurea",
+    );
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          client: "codex",
+          state: "aligned",
+          remediation: null,
+        }),
+        expect.objectContaining({
+          client: "cursor",
+          state: "stale",
+          command: ["/old/hurea", "mcp"],
+          remediation: expect.any(String),
+        }),
+        expect.objectContaining({
+          client: "gemini_cli",
+          state: "invalid",
+          command: [],
+          remediation: expect.any(String),
+        }),
+        expect.objectContaining({
+          client: "claude_code",
+          state: "missing",
+          command: [],
+          remediation: expect.any(String),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(statuses)).not.toContain("SECRET");
+  });
+
+  it.each([null, [], "invalid"])(
+    "reports a malformed server table %j as invalid",
+    async (servers) => {
+      const home = await createTestTempDirectory("hurea-registration-shape-");
+      await mkdir(join(home, ".cursor"));
+      await writeFile(
+        join(home, ".cursor/mcp.json"),
+        JSON.stringify({ mcpServers: servers }),
+      );
+      expect(await readClientRegistrationStatuses(home)).toEqual([
+        expect.objectContaining({
+          client: "cursor",
+          state: "invalid",
+          command: [],
+        }),
+      ]);
+    },
+  );
+
+  it("reports an unversioned npx registration as stale", async () => {
+    const home = await createTestTempDirectory("hurea-registrations-");
+    await mkdir(join(home, ".codex"));
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      '[mcp_servers.hurea]\ncommand = "npx"\nargs = ["-y", "hurea-agents", "mcp"]\n',
+    );
+
+    const statuses = await readClientRegistrationStatuses(home);
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "codex",
+        command: ["npx", "-y", "hurea-agents", "mcp"],
+        state: "stale",
+      }),
+    ]);
+  });
+});

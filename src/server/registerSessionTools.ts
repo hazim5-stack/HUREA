@@ -1,0 +1,366 @@
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
+
+import { isInputRequiredResult } from "@modelcontextprotocol/server";
+import {
+  getNavigationContext,
+  inspectAddressContext,
+} from "../application/AnalysisContextQueries.js";
+import { readAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
+import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
+import { processCapturePermissionRequest } from "../application/ProcessCapturePermission.js";
+import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
+import { captureProcessScenario } from "../application/ProcessHarness.js";
+import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
+import type { Evidence } from "../domain/evidence.js";
+import type {
+  ProcessCapture,
+  ProcessExecutionPolicy,
+  ProcessScenario,
+} from "../domain/processCapture.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { projectPermissionFailure } from "../application/PermissionFailure.js";
+import type { Logger } from "../logger.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
+import {
+  authorizeProcessCaptureWithElicitation,
+  type ProcessCaptureElicitation,
+} from "./ProcessCaptureElicitation.js";
+import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
+import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
+import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
+import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
+import { registerInvestigationTools } from "./registerInvestigationTools.js";
+import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
+import { registerReplayMachineTool } from "./registerReplayMachineTool.js";
+import {
+  registerEvidenceTools,
+  registerUnknownTools,
+} from "./registerSessionRecordTools.js";
+import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
+import {
+  sessionAvailabilityPolicy,
+  type SessionAvailability,
+} from "./sessionAvailabilityPolicy.js";
+import { DENY_PROCESS_POLICY } from "./sessionToolPolicies.js";
+import { logToolExecution } from "./toolLogging.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
+
+const recordProcessResidualUnknowns = (
+  session: BinarySessionPort,
+  scenario: ProcessScenario,
+  evidence: Evidence,
+  residuals: ProcessCapture["residual_unknowns"],
+): Result<null, AnalysisError> => {
+  for (const residual of residuals) {
+    const unknown = session.recordUnknown({
+      question: `Was ${residual.scope} behavior fully observed during capture?`,
+      severity: "medium",
+      domain: `process-${residual.scope}`,
+      supporting_evidence_ids: [evidence.evidence_id],
+      contradicting_evidence_ids: [],
+      required_authority: "controlled-replay",
+      required_confidence: "observed",
+      required_environment: evidence.environment,
+      recommended_probes: [
+        {
+          operation: "capture_process_scenario",
+          rationale:
+            "Repeat with a scenario that observes the missing behavior.",
+        },
+      ],
+      relationships: [],
+    });
+    if (
+      !unknown.ok &&
+      !(
+        unknown.error instanceof UnknownRegistryError &&
+        unknown.error.reason === "already-exists"
+      )
+    )
+      return unknown;
+  }
+  return ok(null);
+};
+
+interface ProcessToolRegistration {
+  readonly server: McpServer;
+  readonly session: BinarySessionPort;
+  readonly logger: Logger;
+  readonly processPolicy: () => ProcessExecutionPolicy;
+  readonly captureContract: (typeof SESSION_TOOL_CONTRACTS)[5];
+  readonly permissionAuthority?: PermissionAuthority;
+  readonly processCaptureElicitation?: ProcessCaptureElicitation;
+}
+
+const registerProcessTools = ({
+  server,
+  session,
+  logger,
+  processPolicy,
+  captureContract,
+  permissionAuthority,
+  processCaptureElicitation,
+}: ProcessToolRegistration): void => {
+  server.registerTool(
+    captureContract.name,
+    toolRegistrationOptions(captureContract),
+    async (input, context) => {
+      const scenario = input;
+      if (permissionAuthority !== undefined) {
+        const request = processCapturePermissionRequest(scenario);
+        const authorized =
+          processCaptureElicitation === undefined
+            ? await permissionAuthority.authorize(request, "read")
+            : await authorizeProcessCaptureWithElicitation(
+                permissionAuthority,
+                request,
+                context,
+                processCaptureElicitation,
+              );
+        if (isInputRequiredResult(authorized)) return authorized;
+        if (!authorized.ok)
+          return toCallToolResult(
+            err(projectPermissionFailure(authorized.error)),
+            captureContract,
+          );
+      }
+      const progress = mcpProgressReporter(context);
+      await progress.report({
+        phase: captureContract.name,
+        completed: 0,
+        total: 1,
+        message: "started",
+      });
+      const captured = await logToolExecution(
+        logger,
+        captureContract.name,
+        () =>
+          captureProcessScenario(
+            scenario,
+            processPolicy(),
+            context.mcpReq.signal,
+          ),
+      );
+      await progress.report({
+        phase: captureContract.name,
+        completed: 1,
+        total: 1,
+        message: captured.ok ? "completed" : "failed",
+        terminal: true,
+      });
+      if (!captured.ok) return toCallToolResult(captured, captureContract);
+      const evidence = createProcessCaptureEvidence(scenario, captured.value);
+      const recorded = session.recordEvidence(evidence);
+      if (!recorded.ok) return toCallToolResult(recorded, captureContract);
+      const unknowns = recordProcessResidualUnknowns(
+        session,
+        scenario,
+        evidence,
+        captured.value.residual_unknowns,
+      );
+      if (!unknowns.ok) return toCallToolResult(unknowns, captureContract);
+      return toCallToolResult(ok(evidence), captureContract);
+    },
+  );
+};
+
+export interface LifecycleToolRegistration {
+  readonly server: McpServer;
+  readonly session: BinarySessionPort;
+  readonly logger: Logger;
+  readonly contracts: readonly [
+    (typeof SESSION_TOOL_CONTRACTS)[0],
+    (typeof SESSION_TOOL_CONTRACTS)[1],
+    (typeof SESSION_TOOL_CONTRACTS)[2],
+  ];
+  readonly startedAt: string;
+  readonly availabilityPolicy: () => SessionAvailability;
+}
+
+const registerLifecycleTools = (
+  registration: LifecycleToolRegistration,
+): void => {
+  const { server, session, contracts, startedAt, availabilityPolicy } =
+    registration;
+  registerOpenLifecycleTool(registration);
+  registerCloseLifecycleTool(registration);
+  registerSessionStatusTool({
+    server,
+    session,
+    contract: contracts[2],
+    startedAt,
+    availabilityPolicy,
+  });
+};
+
+const registerOpenLifecycleTool = ({
+  server,
+  session,
+  logger,
+  contracts: [openContract],
+}: LifecycleToolRegistration): void => {
+  server.registerTool(
+    openContract.name,
+    toolRegistrationOptions(openContract),
+    async (input, context) => {
+      let snapshot: AnalysisSnapshot | undefined;
+      if (input.snapshot_path !== undefined) {
+        const loaded = await readAnalysisSnapshot(input.snapshot_path);
+        if (!loaded.ok) return toCallToolResult(loaded, openContract);
+        snapshot = loaded.value;
+      }
+      const opened = await logToolExecution(logger, openContract.name, () =>
+        session.open(input.path, {
+          signal: context.mcpReq.signal,
+          ...(input.provider_id === undefined
+            ? {}
+            : { providerId: input.provider_id }),
+          ...(snapshot === undefined ? {} : { snapshot }),
+        }),
+      );
+      return opened.ok
+        ? toCallToolResult(
+            {
+              ok: true,
+              value: {
+                path: opened.value.path,
+                format: opened.value.format,
+                kind: opened.value.kind,
+                loaderArgs: z
+                  .array(z.string())
+                  .parse(session.openCompatibility().loaderArgs ?? []),
+                sha256: opened.value.sha256,
+                architecture: opened.value.architecture ?? null,
+              },
+            },
+            openContract,
+          )
+        : toCallToolResult(opened, openContract);
+    },
+  );
+};
+
+/** Register MCP-only target lifecycle operations on a long-lived session. */
+export interface SessionToolOptions {
+  readonly processPolicy?: () => ProcessExecutionPolicy;
+  readonly startedAt?: string;
+  readonly permissionAuthority?: PermissionAuthority;
+  readonly processCaptureElicitation?: ProcessCaptureElicitation;
+  readonly artifactIntegrityContinueEnabled?: () => boolean;
+  readonly availabilityPolicy?: () => SessionAvailability;
+}
+
+const registerRecordAndReplayTools = (
+  server: McpServer,
+  session: BinarySessionPort,
+  logger: Logger,
+): void => {
+  registerUnknownTools({
+    server,
+    session,
+    contracts: SESSION_TOOL_CONTRACTS,
+  });
+  registerReplayMachineTool(server, logger);
+};
+
+const registerContextTools = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
+  const navigationContract = SESSION_TOOL_CONTRACTS[20];
+  const addressContract = SESSION_TOOL_CONTRACTS[21];
+  server.registerTool(
+    navigationContract.name,
+    toolRegistrationOptions(navigationContract),
+    async (input, context) => {
+      return toCallToolResult(
+        await getNavigationContext(session, input, context.mcpReq.signal),
+        navigationContract,
+      );
+    },
+  );
+  server.registerTool(
+    addressContract.name,
+    toolRegistrationOptions(addressContract),
+    async (input, context) => {
+      return toCallToolResult(
+        await inspectAddressContext(session, input, context.mcpReq.signal),
+        addressContract,
+      );
+    },
+  );
+};
+
+export const registerSessionTools = (
+  server: McpServer,
+  session: BinarySessionPort,
+  logger: Logger,
+  options: SessionToolOptions = {},
+): void => {
+  const processPolicy = options.processPolicy ?? (() => DENY_PROCESS_POLICY);
+  const [
+    openContract,
+    closeContract,
+    statusContract,
+    exportContract,
+    importContract,
+    captureContract,
+    compareContract,
+    compareArtifactsContract,
+    compareFunctionsContract,
+    compareBundlesContract,
+    changedBehaviorContract,
+    callPathContract,
+    staticRuntimeContract,
+    reconstructionContract,
+  ] = SESSION_TOOL_CONTRACTS;
+  const snapshotContract = SESSION_TOOL_CONTRACTS[19];
+  registerLifecycleTools({
+    server,
+    session,
+    logger,
+    contracts: [openContract, closeContract, statusContract],
+    startedAt: options.startedAt ?? new Date().toISOString(),
+    availabilityPolicy: sessionAvailabilityPolicy(options.availabilityPolicy, {
+      processPolicy: processPolicy(),
+    }),
+  });
+  registerEvidenceTools({
+    server,
+    session,
+    exportContract,
+    importContract,
+    snapshotContract,
+  });
+  registerProcessTools({
+    server,
+    session,
+    logger,
+    processPolicy,
+    captureContract,
+    ...(options.permissionAuthority === undefined
+      ? {}
+      : { permissionAuthority: options.permissionAuthority }),
+    ...(options.processCaptureElicitation === undefined
+      ? {}
+      : { processCaptureElicitation: options.processCaptureElicitation }),
+  });
+  registerProcessComparisonTool(server, session, compareContract);
+  registerArtifactComparisonTool(server, session, compareArtifactsContract);
+  registerFunctionComparisonTool(server, session, compareFunctionsContract);
+  registerBundleComparisonTool(server, session, compareBundlesContract);
+  const investigationContracts = [
+    changedBehaviorContract,
+    callPathContract,
+    staticRuntimeContract,
+    reconstructionContract,
+  ] as const;
+  registerInvestigationTools(server, session, investigationContracts);
+  registerRecordAndReplayTools(server, session, logger);
+  registerContextTools(server, session);
+};

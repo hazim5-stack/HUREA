@@ -1,0 +1,324 @@
+import { describe, expect, it } from "vitest";
+
+import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { browserScenarioSchema } from "../domain/browserScenario.js";
+
+const secret = (secret_id: string) => ({ source: "secret", secret_id });
+const literal = (value: string) => ({
+  source: "literal",
+  value,
+  classification: "public",
+});
+
+const baseScenario = () => ({
+  browser: {
+    mode: "launch",
+    executable_path: "/opt/chromium/chrome",
+    headless: true,
+    user_data: "temporary-owned",
+    cleanup: "close-and-delete-profile",
+  },
+  start_url: {
+    url: "https://app.example.test/",
+    query: [{ name: "token", value: secret("session") }],
+  },
+  allowed_origins: ["https://api.example.test", "https://app.example.test"],
+  actions: [
+    {
+      step_id: "login",
+      action: "fill",
+      locator: { kind: "test_id", value: "password" },
+      value: secret("login_input"),
+    },
+    {
+      step_id: "submit",
+      action: "click",
+      locator: {
+        kind: "role",
+        role: "button",
+        name: "Sign in",
+        exact: true,
+      },
+    },
+    {
+      step_id: "dashboard",
+      action: "goto",
+      destination: { url: "https://app.example.test/dashboard" },
+      wait_until: "load",
+    },
+  ],
+  storage: {
+    cookies: [
+      {
+        name: "sid",
+        value: secret("cookie"),
+        destination: { url: "https://app.example.test/" },
+        http_only: true,
+        secure: true,
+        same_site: "Lax",
+      },
+    ],
+    local_storage: [
+      {
+        origin: "https://app.example.test",
+        entries: [{ name: "theme", value: literal("dark") }],
+      },
+    ],
+  },
+  request_replay: {
+    mode: "exact",
+    unmatched: "abort",
+    routes: [
+      {
+        route_id: "profile",
+        method: "GET",
+        request: { url: "https://api.example.test/profile" },
+        response: {
+          kind: "response",
+          status: 200,
+          headers: [
+            {
+              name: "content-type",
+              value: literal("application/json"),
+            },
+          ],
+          body: literal('{"name":"Ada"}'),
+        },
+      },
+    ],
+  },
+  secrets: [
+    {
+      secret_id: "session",
+      environment_variable: "HUREA_TEST_SESSION",
+      purpose: "input",
+      redaction: "replace-with-secret-reference",
+    },
+    {
+      secret_id: "login_input",
+      environment_variable: "HUREA_TEST_PASSWORD",
+      purpose: "input",
+      redaction: "replace-with-secret-reference",
+    },
+    {
+      secret_id: "cookie",
+      environment_variable: "HUREA_TEST_COOKIE",
+      purpose: "storage",
+      redaction: "replace-with-secret-reference",
+    },
+  ],
+  redaction: {
+    secret_values: "replace-with-secret-reference",
+    query_parameter_names: ["token"],
+  },
+  capture: {
+    after_each_step: ["screenshot", "url", "accessibility"],
+    at_end: ["dom", "storage"],
+    events: ["console", "page-errors", "network", "websockets"],
+  },
+});
+
+describe("browserScenarioSchema", () => {
+  it("accepts and normalizes a declared scenario", () => {
+    const parsed = browserScenarioSchema.parse(baseScenario());
+    expect(parsed.allowed_origins).toEqual([
+      "https://api.example.test",
+      "https://app.example.test",
+    ]);
+    expect(parsed.environment).toMatchObject({
+      viewport: { width: 1_280, height: 720, device_scale_factor: 1 },
+      locale: "en-US",
+      timezone: "UTC",
+      color_scheme: "light",
+      reduced_motion: "reduce",
+      service_workers: "block",
+    });
+    expect(parsed.request_replay).toEqual({
+      mode: "exact",
+      unmatched: "abort",
+      routes: expect.any(Array),
+    });
+    expect(parsed.capture).toEqual({
+      after_each_step: ["screenshot", "url", "accessibility"],
+      at_end: ["dom", "storage"],
+      events: ["console", "page-errors", "network", "websockets"],
+    });
+    expect(parsed.redaction.header_names).toEqual([
+      "authorization",
+      "cookie",
+      "proxy-authorization",
+      "set-cookie",
+    ]);
+    expect(parsed).not.toHaveProperty("limits");
+  });
+
+  it("accepts caller selected action timeouts without a fixed ceiling", () => {
+    const input = baseScenario();
+    input.actions[0] = { ...input.actions[0], timeout_ms: 120_000 } as never;
+    input.actions[1] = {
+      step_id: "pause",
+      action: "wait_for_timeout",
+      duration_ms: 120_001,
+    } as never;
+    const actions = browserScenarioSchema.parse(input).actions;
+    expect(actions[0]).toMatchObject({ timeout_ms: 120_000 });
+    expect(actions[1]).toMatchObject({ duration_ms: 120_001 });
+  });
+
+  it("does not accept the removed provider timeout configuration", () => {
+    expect(
+      browserScenarioSchema.safeParse({
+        ...baseScenario(),
+        limits: { max_duration_ms: 1 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("redacts overlapping secrets longest-first", () => {
+    const scenario = browserScenarioSchema.parse(baseScenario());
+    const secrets = BrowserScenarioSecrets.resolve(scenario, {
+      HUREA_TEST_SESSION: "prefix",
+      HUREA_TEST_PASSWORD: "prefix-suffix",
+      HUREA_TEST_COOKIE: "cookie",
+    });
+    expect(secrets?.redact("prefix-suffix")).toBe("[REDACTED:login_input]");
+  });
+
+  it("rejects unsupported actions", () => {
+    const scenario = baseScenario();
+    scenario.actions = [
+      {
+        step_id: "script",
+        action: "evaluate",
+        expression: "document.cookie",
+      } as never,
+    ];
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+  });
+
+  it("rejects every undeclared navigation, storage, and replay origin", () => {
+    for (const mutate of [
+      (scenario: ReturnType<typeof baseScenario>) => {
+        scenario.start_url.url = "https://other.example.test/";
+      },
+      (scenario: ReturnType<typeof baseScenario>) => {
+        scenario.actions[2] = {
+          ...scenario.actions[2],
+          destination: { url: "https://other.example.test/" },
+        } as never;
+      },
+      (scenario: ReturnType<typeof baseScenario>) => {
+        scenario.storage.local_storage[0]!.origin =
+          "https://other.example.test";
+      },
+      (scenario: ReturnType<typeof baseScenario>) => {
+        scenario.request_replay.routes[0]!.request.url =
+          "https://other.example.test/data";
+      },
+    ]) {
+      const scenario = baseScenario();
+      mutate(scenario);
+      expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+    }
+  });
+});
+
+describe("browserScenarioSchema credential handling", () => {
+  it("rejects redirects outside declared origins", () => {
+    const scenario = baseScenario();
+    scenario.request_replay.routes[0]!.response = {
+      kind: "redirect",
+      status: 302,
+      destination: { url: "https://other.example.test/" },
+    } as never;
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+  });
+
+  it("rejects missing, duplicate, and unused secret declarations", () => {
+    const missing = baseScenario();
+    missing.secrets = missing.secrets.filter(
+      ({ secret_id }) => secret_id !== "login_input",
+    );
+    expect(browserScenarioSchema.safeParse(missing).success).toBe(false);
+
+    const duplicate = baseScenario();
+    duplicate.secrets.push({ ...duplicate.secrets[0]! });
+    expect(browserScenarioSchema.safeParse(duplicate).success).toBe(false);
+
+    const unused = baseScenario();
+    unused.secrets.push({
+      secret_id: "unused",
+      environment_variable: "HUREA_TEST_UNUSED",
+      purpose: "input",
+      redaction: "replace-with-secret-reference",
+    });
+    expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
+  });
+
+  it("rejects secret query values without named redaction", () => {
+    const scenario = baseScenario();
+    scenario.redaction.query_parameter_names = [];
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+  });
+
+  it("rejects literal credential headers and provider-owned headers", () => {
+    for (const name of ["authorization", "content-length"]) {
+      const scenario = baseScenario();
+      scenario.request_replay.routes[0]!.response = {
+        kind: "response",
+        status: 200,
+        headers: [{ name, value: literal("raw") }],
+      } as never;
+      expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+    }
+  });
+
+  it("rejects duplicate replay response headers case-insensitively", () => {
+    const scenario = baseScenario();
+    const response = scenario.request_replay.routes[0]!.response;
+    if (response.kind !== "response")
+      throw new Error("Expected replay response fixture");
+    response.headers.push({
+      name: "Content-Type",
+      value: literal("text/plain"),
+    });
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+  });
+
+  it("rejects raw secret-shaped action values", () => {
+    const scenario = baseScenario();
+    scenario.actions[0] = {
+      ...scenario.actions[0],
+      value: "literal-input",
+    } as never;
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+  });
+
+  it("rejects embedded URL credentials and query values", () => {
+    const credentialedUrl = new URL("https://app.example.test/");
+    credentialedUrl.username = String.fromCodePoint(120);
+    for (const url of [
+      credentialedUrl.href,
+      "https://app.example.test/?token=raw",
+    ]) {
+      const scenario = baseScenario();
+      scenario.start_url.url = url;
+      expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+    }
+  });
+
+  it("requires explicit external ownership for CDP connections", () => {
+    const scenario = baseScenario();
+    scenario.browser = {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page-1",
+      ownership: "external",
+      cleanup: "disconnect-only",
+    } as never;
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(true);
+
+    scenario.browser.cleanup = "close-browser" as never;
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+  });
+});

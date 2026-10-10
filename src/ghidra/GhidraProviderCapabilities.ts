@@ -1,0 +1,174 @@
+import type {
+  CapabilityDescriptor,
+  ProviderIdentity,
+} from "../application/AnalysisProvider.js";
+import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
+import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
+
+/** Public identity committed by every Ghidra-backed observation. */
+export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
+  id: "ghidra",
+  name: "Ghidra",
+  version: null,
+});
+
+const providerContractByName = new Map(
+  GENERATED_MCP_TOOL_CATALOG.filter(
+    ({ kind }) => kind === "official-proxy" || kind === "enhanced",
+  ).map((contract) => [contract.name, contract]),
+);
+
+/** Provider-neutral read-only contracts implemented by the Ghidra adapter. */
+export const GHIDRA_PROVIDER_TOOL_CONTRACTS = Object.freeze(
+  [...GHIDRA_INVENTORY_OPERATIONS, ...GHIDRA_FUNCTION_OPERATIONS].map(
+    (operation) => {
+      const contract = providerContractByName.get(operation);
+      if (contract === undefined)
+        throw new TypeError(
+          `Missing provider-neutral contract for ${operation}`,
+        );
+      return contract;
+    },
+  ),
+);
+
+/** Health limitations shared by every Ghidra-backed capability. */
+export const healthLimitations = Object.freeze([
+  "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
+  "The imported Program and temporary project are ephemeral, read-only to HUREA, and deleted on close.",
+]);
+
+/** Additional limitations applied to the experimental Windows x64 P0 boundary. */
+export const windowsP0Limitations = Object.freeze([
+  "Windows Ghidra P0 accepts approved native x86-64 PE applications only; DLL, managed, hostile, sensitive, and mutable-path targets are unsupported.",
+  "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
+  "Windows P0 is not admitted until a native authority proves Job Object ownership, private DACL enforcement, and reparse-safe path admission; bounded taskkill cleanup and chmod(0700) do not prove those controls.",
+]);
+
+/** Limitation text for one admitted operation, including the common base. */
+export const limitationsFor = (operation: string): readonly string[] => {
+  const common = [
+    ...healthLimitations,
+    "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
+  ];
+  switch (operation) {
+    case "list_documents":
+      return [
+        ...common,
+        "A headless Ghidra session contains exactly one imported Program, unlike Hopper's multi-document GUI session.",
+      ];
+    case "list_names":
+      return [
+        ...common,
+        "The symbol inventory includes memory and external symbols, including dynamic symbols, but excludes variable and no-address namespace records.",
+      ];
+    case "list_procedures":
+    case "procedure_address":
+      return [
+        ...common,
+        "External functions and local thunks are distinct; procedure metadata identifies both and preserves a thunk target when Ghidra resolves one.",
+      ];
+    case "list_strings":
+      return [
+        ...common,
+        "Only Ghidra-defined string Data is observed; charset is reported, while a non-missing terminator cannot distinguish a present terminator from a fixed or Pascal layout.",
+      ];
+    case "list_segments":
+      return [
+        ...common,
+        "Memory-block end addresses are exclusive; permissions come from Ghidra MemoryBlock flags rather than inference from section names.",
+      ];
+    case "search_procedures":
+    case "search_strings":
+      return common;
+    case "procedure_pseudo_code":
+      return [
+        ...common,
+        "Pseudocode is Ghidra decompiler output, not original source and not text-equivalent to Hopper output.",
+        "External functions and functions without an analyzable body return null; other decompiler failures remain explicit.",
+      ];
+    case "read_function_instructions":
+      return [
+        ...common,
+        "This fast path reads only the requested function and does not invoke the decompiler or whole-program string/name inventories.",
+        "Instruction text is Ghidra-specific and does not claim textual equivalence with Hopper output.",
+      ];
+    case "procedure_assembly":
+      return [
+        ...common,
+        "Assembly is Ghidra Listing text and does not claim textual equivalence with Hopper output.",
+      ];
+    case "procedure_callers":
+    case "procedure_callees":
+      return [
+        ...common,
+        "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
+      ];
+    case "xrefs":
+      return [
+        ...common,
+        "The direct address list projects exact Ghidra references to one address but does not expose their kinds; procedure_references and analyze_function preserve available kind metadata.",
+        "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
+      ];
+    case "procedure_references":
+      return [
+        ...common,
+        "Reference kinds are direct Ghidra ReferenceManager observations; unresolved computed flows without a target are absent and remain unknown.",
+        "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
+      ];
+    case "analyze_function":
+      return [
+        ...common,
+        "The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.",
+        "Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.",
+        "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
+        "The Java bridge serializes one function request per Program and lets each decompilation run until it completes or the caller cancels.",
+      ];
+    default:
+      return common;
+  }
+};
+
+/** Provider-neutral capabilities advertised by every non-Windows Ghidra session. */
+export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
+  GHIDRA_PROVIDER_TOOL_CONTRACTS.map((contract) => {
+    const operation = contract.analysisOperation;
+    if (operation === null)
+      throw new TypeError(`Missing analysis operation for ${contract.name}`);
+    return Object.freeze({
+      provider: GHIDRA_PROVIDER_IDENTITY,
+      operation,
+      available: true,
+      reason: null,
+      effects: Object.freeze({
+        mutatesArtifact: false,
+        launchesProcess: true,
+        mayShowUi: false,
+        mayAccessNetwork: false,
+        mayWriteFilesystem: true,
+        changesPermissions: false,
+        requiresRoot: false,
+      }),
+      limitations: Object.freeze(limitationsFor(contract.name)),
+    });
+  }),
+);
+
+/** Capabilities advertised for the experimental Windows x64 P0 boundary. */
+export const WINDOWS_P0_CAPABILITIES: readonly CapabilityDescriptor[] =
+  Object.freeze(
+    CAPABILITIES.map((capability) =>
+      Object.freeze({
+        ...capability,
+        available: false,
+        reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        availabilityCode: "unsupported_host" as const,
+        limitations: Object.freeze([
+          ...capability.limitations,
+          ...windowsP0Limitations,
+        ]),
+      }),
+    ),
+  );

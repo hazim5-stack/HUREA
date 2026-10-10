@@ -1,0 +1,223 @@
+import { createHash } from "node:crypto";
+
+import { z } from "zod";
+import type { BrowserContext, Page } from "playwright-core";
+
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import type { BrowserScenario } from "../domain/browserScenario.js";
+import {
+  browserStepArtifactsSchema,
+  type BrowserStepArtifacts,
+} from "../domain/browserScenarioCapture.js";
+import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+
+const historyValueSchema = z.strictObject({
+  length: z.number().int().min(0),
+  navigation_entries: z.array(
+    z.strictObject({
+      type: z.string(),
+      name: z.string(),
+    }),
+  ),
+});
+
+const storageValueSchema = z.strictObject({
+  local_storage: z.array(z.tuple([z.string(), z.string()])),
+  session_storage: z.array(z.tuple([z.string(), z.string()])),
+});
+
+type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
+
+const notRequested = () => ({ state: "not_requested" as const });
+const missing = (reason: string) => ({ state: "missing" as const, reason });
+
+const textArtifact = (text: string) => {
+  const bytes = Buffer.from(text);
+  return {
+    state: "captured" as const,
+    value: {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.byteLength,
+      text,
+    },
+  };
+};
+
+const captureScreenshot = async (page: Page) => {
+  try {
+    const bytes = await page.screenshot({
+      type: "png",
+      fullPage: false,
+      animations: "disabled",
+      caret: "hide",
+    });
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    return {
+      state: "captured" as const,
+      value: {
+        sha256,
+        bytes: bytes.byteLength,
+        media_type: "image/png" as const,
+        data_base64: bytes.toString("base64"),
+      },
+    };
+  } catch {
+    return missing("screenshot capture failed");
+  }
+};
+
+const captureDom = async (input: {
+  readonly page: Page;
+  readonly secrets: BrowserScenarioSecrets;
+}) => {
+  const { page, secrets } = input;
+  try {
+    return textArtifact(secrets.redact(await page.content()));
+  } catch {
+    return missing("DOM capture failed");
+  }
+};
+
+const captureAccessibility = async (input: {
+  readonly page: Page;
+  readonly secrets: BrowserScenarioSecrets;
+}) => {
+  const { page, secrets } = input;
+  try {
+    const text = await page.locator("html").ariaSnapshot();
+    return textArtifact(secrets.redact(text));
+  } catch {
+    return missing("accessibility capture failed");
+  }
+};
+
+const navigationType = (
+  value: string,
+): "navigate" | "reload" | "back_forward" | "prerender" | "unknown" => {
+  switch (value) {
+    case "navigate":
+    case "reload":
+    case "back_forward":
+    case "prerender":
+      return value;
+    default:
+      return "unknown";
+  }
+};
+
+const captureHistory = async (page: Page) => {
+  try {
+    const raw = historyValueSchema.parse(
+      await page.evaluate(`(() => ({
+        length: window.history.length,
+        navigation_entries: performance.getEntriesByType("navigation").map(
+          entry => ({
+            type: typeof entry.type === "string" ? entry.type : "unknown",
+            name: entry.name
+          })
+        )
+      }))()`),
+    );
+    const value = {
+      length: raw.length,
+      current_url: sanitizeBrowserUrl(page.url()),
+      navigation_entries: raw.navigation_entries.map(({ type, name }) => ({
+        type: navigationType(type),
+        name: sanitizeBrowserUrl(name),
+      })),
+    };
+    return { state: "captured" as const, value };
+  } catch {
+    return missing("history capture failed");
+  }
+};
+
+const captureStorage = async (input: {
+  readonly context: BrowserContext;
+  readonly page: Page;
+  readonly scenario: BrowserScenario;
+  readonly secrets: BrowserScenarioSecrets;
+}) => {
+  const { context, page, scenario, secrets } = input;
+  try {
+    const cookies = await context.cookies(scenario.allowed_origins);
+    const pageStorage = storageValueSchema.parse(
+      await page.evaluate(`(() => ({
+        local_storage: Object.entries(window.localStorage),
+        session_storage: Object.entries(window.sessionStorage)
+      }))()`),
+    );
+    const value = {
+      cookies: cookies.map((cookie) => ({
+        name: cookie.name,
+        domain: cookie.domain,
+        path: cookie.path,
+        secure: cookie.secure,
+        http_only: cookie.httpOnly,
+        same_site: cookie.sameSite,
+        ...secrets.fingerprint(cookie.value),
+      })),
+      local_storage: pageStorage.local_storage.map(([name, value]) => ({
+        name,
+        ...secrets.fingerprint(value),
+      })),
+      session_storage: pageStorage.session_storage.map(([name, value]) => ({
+        name,
+        ...secrets.fingerprint(value),
+      })),
+    };
+    return { state: "captured" as const, value };
+  } catch {
+    return missing("storage capture failed");
+  }
+};
+
+const isAllowedPage = (
+  page: Page,
+  allowedOrigins: ReadonlySet<string>,
+): boolean => {
+  try {
+    return allowedOrigins.has(new URL(page.url()).origin);
+  } catch {
+    return false;
+  }
+};
+
+/** Capture selected step artifacts without retaining data after scope loss. */
+export const capturePlaywrightStepArtifacts = async (input: {
+  readonly context: BrowserContext;
+  readonly page: Page;
+  readonly scenario: BrowserScenario;
+  readonly secrets: BrowserScenarioSecrets;
+  readonly requested: ReadonlySet<SnapshotKind>;
+}): Promise<BrowserStepArtifacts> => {
+  const { context, page, scenario, secrets, requested } = input;
+  const allowed = isAllowedPage(page, new Set(scenario.allowed_origins));
+  const denied = () => missing("current page is outside approved origins");
+  const state = <Value>(
+    kind: SnapshotKind,
+    capture: () => Promise<Value>,
+  ): Promise<
+    Value | ReturnType<typeof notRequested> | ReturnType<typeof missing>
+  > =>
+    !requested.has(kind)
+      ? Promise.resolve(notRequested())
+      : allowed || kind === "url"
+        ? capture()
+        : Promise.resolve(denied());
+  return browserStepArtifactsSchema.parse({
+    screenshot: await state("screenshot", () => captureScreenshot(page)),
+    dom: await state("dom", () => captureDom({ page, secrets })),
+    accessibility: await state("accessibility", () =>
+      captureAccessibility({ page, secrets }),
+    ),
+    url: await state("url", async () => ({
+      state: "captured" as const,
+      value: sanitizeBrowserUrl(page.url()),
+    })),
+    history: await state("history", () => captureHistory(page)),
+    storage: await state("storage", () =>
+      captureStorage({ context, page, scenario, secrets }),
+    ),
+  });
+};

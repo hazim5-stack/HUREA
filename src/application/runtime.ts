@@ -1,0 +1,68 @@
+import type { AppConfig } from "../config.js";
+import type { BinarySession } from "./BinarySession.js";
+import { HopperProvider } from "../hopper/HopperProvider.js";
+import { GhidraProvider } from "../ghidra/GhidraProvider.js";
+import { silentLogger, type Logger } from "../logger.js";
+import { GENERATED_AUXILIARY_PROVIDERS } from "../generatedMcpToolCatalog.js";
+import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
+import { composeBinarySession } from "./BinarySessionComposition.js";
+import { nativeHostCapabilities } from "../native/NativeHostCapabilities.js";
+import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
+
+/**
+ * Compose the target-switching runtime shared directly by CLI and MCP adapters.
+ * This is the sole production wiring point, so both adapters share identical
+ * provider selection, profile, lifecycle, and Evidence semantics.
+ */
+export const createBinarySession = (
+  config: AppConfig,
+  logger: Logger = silentLogger,
+): BinarySession => {
+  const hopper = new HopperProvider(config, logger);
+  const ghidra = new GhidraProvider(config, logger);
+  const auxiliary = new Map(
+    GENERATED_AUXILIARY_PROVIDERS.map((provider) => [
+      provider.identity.id,
+      provider,
+    ]),
+  );
+  const lazyProvider = (
+    id: string,
+    load: ConstructorParameters<typeof LazyAnalysisProvider>[0]["load"],
+  ) => {
+    const generated = auxiliary.get(id);
+    if (generated === undefined)
+      throw new TypeError(`Missing generated provider metadata for ${id}`);
+    return new LazyAnalysisProvider({
+      ...generated,
+      capabilities: nativeHostCapabilities(generated.capabilities),
+      load,
+    });
+  };
+  return composeBinarySession(
+    new AnalysisProviderRegistry([hopper, ghidra], config.analysisProvider),
+    [
+      lazyProvider("hurea-artifact-graph", async () => {
+        const { ArtifactProvider } = await import(
+          "../artifacts/ArtifactProvider.js"
+        );
+        return new ArtifactProvider(
+          config.artifactNativeMountEnabled,
+          config.artifactIntegrityContinueEnabled,
+        );
+      }),
+      lazyProvider("native-macos", async () => {
+        const { NativeMacOSProvider } = await import(
+          "../native/NativeMacOSProvider.js"
+        );
+        return new NativeMacOSProvider();
+      }),
+      lazyProvider("hurea-dotnet-static", async () => {
+        const { ManagedStaticProvider } = await import(
+          "../dotnet/ManagedStaticProvider.js"
+        );
+        return new ManagedStaticProvider();
+      }),
+    ],
+  );
+};

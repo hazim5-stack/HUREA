@@ -1,0 +1,277 @@
+import { createHash } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+import type { ProjectPermissionStore } from "../../../src/application/ProjectPermissionStore.js";
+import type { PermissionGrant } from "../../../src/domain/permissionPolicy.js";
+import { ok } from "../../../src/domain/result.js";
+import { run } from "../../../src/main.js";
+import {
+  createServer,
+  type CreateServerOptions,
+} from "../../../src/server/createServer.js";
+
+type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
+
+const directories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, force: true })),
+  );
+});
+
+describe("runtime permission reload", () => {
+  it("keeps live state unchanged after a late grant failure, then commits together", async () => {
+    const fixture = await reloadFixture();
+    const invalid = projectStore(fixture.projectRoot, [
+      projectGrant("invalid", fixture.outsideRoot),
+    ]);
+    const valid = projectStore(fixture.projectRoot, [
+      projectGrant("valid", fixture.newRoot),
+    ]);
+    const validReadStarted = deferred<void>();
+    const releaseValidRead = deferred<void>();
+    let reads = 0;
+    const runtime = await startRuntime(fixture.env, async () => {
+      reads += 1;
+      if (reads === 1) return ok(invalid);
+      validReadStarted.resolve();
+      await releaseValidRead.promise;
+      return ok(valid);
+    });
+
+    configure(fixture.env, fixture.newRoot, true);
+    runtime.reload();
+    runtime.reload();
+    await validReadStarted.promise;
+
+    expect(runtime.options.processPolicy?.().status).toBe("disabled");
+    expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(false);
+    expectOptionalPolicies(runtime.options, { status: "disabled" });
+
+    releaseValidRead.resolve();
+    await expect
+      .poll(() => runtime.options.processPolicy?.().status)
+      .toBe("enabled");
+
+    expect(runtime.options.processPolicy?.().status).toBe("enabled");
+    expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(true);
+    expectOptionalPolicies(runtime.options, {
+      status: "enabled",
+      root: fixture.newRoot,
+    });
+  });
+
+  it("serializes overlapping reloads so an older read cannot commit last", async () => {
+    const fixture = await reloadFixture();
+    const firstReadStarted = deferred<void>();
+    const releaseFirstRead = deferred<void>();
+    const secondReadStarted = deferred<void>();
+    let secondStarted = false;
+    let reads = 0;
+    const runtime = await startRuntime(fixture.env, async () => {
+      reads += 1;
+      if (reads === 1) {
+        firstReadStarted.resolve();
+        await releaseFirstRead.promise;
+        return ok(projectStore(fixture.projectRoot, []));
+      }
+      secondStarted = true;
+      secondReadStarted.resolve();
+      return ok(projectStore(fixture.projectRoot, []));
+    });
+
+    configure(fixture.env, fixture.newRoot, true);
+    runtime.reload();
+    await firstReadStarted.promise;
+    configure(fixture.env, fixture.latestRoot, false);
+    runtime.reload();
+
+    expect(secondStarted).toBe(false);
+    releaseFirstRead.resolve();
+    await secondReadStarted.promise;
+    await expect
+      .poll(() => runtime.options.processPolicy?.().status)
+      .toBe("disabled");
+
+    expect(runtime.options.processPolicy?.().status).toBe("disabled");
+    expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(false);
+    expectOptionalPolicies(runtime.options, { status: "disabled" });
+  });
+
+  it("continues with later reloads after an unexpected reload rejection", async () => {
+    const fixture = await reloadFixture();
+    let reads = 0;
+    const runtime = await startRuntime(fixture.env, async () => {
+      reads += 1;
+      if (reads === 1) throw new Error("synthetic unexpected read failure");
+      return ok(projectStore(fixture.projectRoot, []));
+    });
+
+    configure(fixture.env, fixture.newRoot, true);
+    runtime.reload();
+    runtime.reload();
+    await expect.poll(() => reads).toBe(2);
+
+    expect(runtime.options.processPolicy?.().status).toBe("enabled");
+    expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(true);
+    expectOptionalPolicies(runtime.options, {
+      status: "enabled",
+      root: fixture.newRoot,
+    });
+  });
+});
+
+type ExpectedOptionalPolicies =
+  | { readonly status: "disabled" }
+  | { readonly status: "enabled"; readonly root: string };
+
+const expectOptionalPolicies = (
+  options: CreateServerOptions,
+  expected: ExpectedOptionalPolicies,
+): void => {
+  const enabled = expected.status === "enabled";
+  expect(options.managedRuntimePolicy?.()).toEqual(
+    enabled
+      ? {
+          status: "enabled",
+          roots: [expected.root],
+          executablePath: process.execPath,
+        }
+      : { status: "disabled" },
+  );
+  expect(options.javascriptReplayPolicy?.()).toMatchObject(
+    enabled
+      ? { status: "enabled", roots: [expected.root] }
+      : { status: "disabled" },
+  );
+  expect(options.availabilityPolicy?.()).toMatchObject({
+    browserObservationEnabled: enabled,
+    electronObservationEnabled: enabled,
+    v8InspectorObservationEnabled: enabled,
+    javascriptReplayEnabled: enabled,
+  });
+};
+
+const reloadFixture = async () => {
+  const directory = await createTestTempDirectory("hurea-main-reload-");
+  directories.push(directory);
+  const oldRoot = join(directory, "old");
+  const newRoot = join(directory, "new");
+  const latestRoot = join(directory, "latest");
+  const outsideRoot = join(directory, "outside");
+  const projectRoot = join(directory, "project");
+  await Promise.all(
+    [oldRoot, newRoot, latestRoot, outsideRoot, projectRoot].map((path) =>
+      mkdir(path),
+    ),
+  );
+  const env: NodeJS.ProcessEnv = {
+    HUREA_PERMISSION_PROJECT_ROOT: projectRoot,
+    HUREA_PERMISSION_PROJECT_STORE: join(directory, "permissions.json"),
+  };
+  return { env, oldRoot, newRoot, latestRoot, outsideRoot, projectRoot };
+};
+
+const configure = (
+  env: NodeJS.ProcessEnv,
+  root: string,
+  enabled: boolean,
+): void => {
+  env.HUREA_PROCESS_CAPTURE_ENABLED = String(enabled);
+  env.HUREA_PROCESS_EXECUTABLE_ROOTS_JSON = JSON.stringify([root]);
+  env.HUREA_PROCESS_WORKING_ROOTS_JSON = JSON.stringify([root]);
+  env.HUREA_ARTIFACT_INTEGRITY_CONTINUE_ENABLED = String(enabled);
+  env.HUREA_MANAGED_RUNTIME_ENABLED = String(enabled);
+  env.HUREA_MANAGED_RUNTIME_ROOTS_JSON = JSON.stringify([root]);
+  env.HUREA_MANAGED_RUNTIME_EXECUTABLE_PATH = process.execPath;
+  env.HUREA_JAVASCRIPT_REPLAY_ENABLED = String(enabled);
+  env.HUREA_JAVASCRIPT_REPLAY_ROOTS_JSON = JSON.stringify([root]);
+  env.HUREA_JAVASCRIPT_REPLAY_NODE_PATH = process.execPath;
+  env.HUREA_JAVASCRIPT_REPLAY_BWRAP_PATH = process.execPath;
+  env.HUREA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH = process.execPath;
+  env.HUREA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH = process.execPath;
+  env.HUREA_JAVASCRIPT_REPLAY_SHELL_PATH = process.execPath;
+  env.HUREA_BROWSER_OBSERVE_ENABLED = String(enabled);
+  env.HUREA_BROWSER_CDP_ENDPOINTS_JSON = JSON.stringify([
+    "http://127.0.0.1:9222",
+  ]);
+  env.HUREA_BROWSER_ALLOWED_ORIGINS_JSON = JSON.stringify([
+    "https://example.test",
+  ]);
+  env.HUREA_ELECTRON_OBSERVE_ENABLED = String(enabled);
+  env.HUREA_V8_INSPECTOR_OBSERVE_ENABLED = String(enabled);
+};
+
+const startRuntime = async (
+  env: NodeJS.ProcessEnv,
+  readStore: NonNullable<RuntimeDependencies["readProjectPermissionStore"]>,
+) => {
+  let reload: (() => void) | undefined;
+  let options: CreateServerOptions | undefined;
+  const result = await run({
+    env,
+    serve: (factory) => {
+      void factory({ era: "legacy" });
+      return { close: () => Promise.resolve() };
+    },
+    writeStderr: () => undefined,
+    setExitCode: () => undefined,
+    registerShutdown: () => () => undefined,
+    registerReload: (handler) => {
+      reload = handler;
+      return () => undefined;
+    },
+    readProjectPermissionStore: readStore,
+    createServer: (analysis, session, received) => {
+      options = received;
+      return createServer(analysis, session, received);
+    },
+  });
+  expect(result).toBe(0);
+  if (reload === undefined || options === undefined)
+    throw new Error("Runtime reload seam was not initialized");
+  const capturedOptions = options;
+  return {
+    reload,
+    options: capturedOptions,
+  };
+};
+
+const projectStore = (
+  projectRoot: string,
+  grants: readonly ReturnType<typeof projectGrant>[],
+): ProjectPermissionStore => ({
+  project_id: `project_${createHash("sha256").update(projectRoot).digest("hex")}`,
+  project_root: projectRoot,
+  grants: [...grants],
+});
+
+const projectGrant = (id: string, root: string) =>
+  ({
+    grant_id: `project:${id}`,
+    capability: "process_capture",
+    roots: [root],
+    executables: [],
+    environment_names: [],
+    network: "none",
+    mount: false,
+    lifetime: "project",
+    operation_identity: null,
+    expires_at: null,
+  }) satisfies PermissionGrant;
+
+const deferred = <T>() => {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+};

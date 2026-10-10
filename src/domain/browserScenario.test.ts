@@ -1,0 +1,200 @@
+import { expect, it } from "vitest";
+
+import { browserScenarioSchema } from "./browserScenario.js";
+
+it("accepts scenarios beyond former action, secret, storage, and replay-route counts", () => {
+  const actions = Array.from({ length: 129 }, (_, index) => ({
+    step_id: `fill_${index}`,
+    action: "fill",
+    locator: { kind: "css", selector: "#field" },
+    value: { source: "secret", secret_id: `secret_${index}` },
+  }));
+  const secrets = Array.from({ length: actions.length }, (_, index) => ({
+    secret_id: `secret_${index}`,
+    environment_variable: `SECRET_${index}`,
+    purpose: "input",
+    redaction: "replace-with-secret-reference",
+  }));
+  const cookies = Array.from({ length: 129 }, (_, index) => ({
+    name: `cookie_${index}`,
+    value: { source: "literal", value: "value", classification: "public" },
+    destination: { url: "https://app.example.test/" },
+    http_only: false,
+    secure: true,
+    same_site: "Lax",
+  }));
+  const storageEntries = Array.from({ length: 129 }, (_, index) => ({
+    name: `entry_${index}`,
+    value: { source: "literal", value: "value", classification: "public" },
+  }));
+  const routes = Array.from({ length: 257 }, (_, index) => ({
+    route_id: `route_${index}`,
+    method: "GET",
+    request: { url: `https://app.example.test/${index}` },
+    response: { kind: "response", status: 200 },
+  }));
+
+  const result = browserScenarioSchema.parse({
+    browser: {
+      mode: "launch",
+      executable_path: "/opt/chromium",
+      headless: true,
+      user_data: "temporary-owned",
+      cleanup: "close-and-delete-profile",
+    },
+    start_url: { url: "https://app.example.test/" },
+    allowed_origins: ["https://app.example.test"],
+    actions,
+    secrets,
+    storage: {
+      cookies,
+      local_storage: [
+        { origin: "https://app.example.test", entries: storageEntries },
+      ],
+      session_storage: [
+        { origin: "https://app.example.test", entries: storageEntries },
+      ],
+    },
+    request_replay: {
+      mode: "exact",
+      unmatched: "abort",
+      routes,
+    },
+  });
+
+  expect(result.actions).toHaveLength(129);
+  expect(result.secrets).toHaveLength(129);
+  expect(result.storage.cookies).toHaveLength(129);
+  expect(result.storage.local_storage[0]?.entries).toHaveLength(129);
+  expect(result.storage.session_storage[0]?.entries).toHaveLength(129);
+  expect(
+    result.request_replay.mode === "exact" && result.request_replay.routes,
+  ).toHaveLength(257);
+});
+
+it("accepts complete browser inputs beyond former string length caps", () => {
+  const longValue = "value".repeat(20_000);
+  const longToken = "a".repeat(70_000);
+  const longEnvironmentVariable = "SECRET_A".repeat(10_000);
+  const longPath = `/app/${"segment".repeat(3_000)}`;
+  const result = browserScenarioSchema.parse({
+    browser: {
+      mode: "launch",
+      executable_path: longPath,
+      headless: true,
+      user_data: "temporary-owned",
+      cleanup: "close-and-delete-profile",
+    },
+    start_url: { url: `https://app.example.test${longPath}` },
+    allowed_origins: ["https://app.example.test"],
+    secrets: [
+      {
+        secret_id: longToken,
+        environment_variable: longEnvironmentVariable,
+        purpose: "input",
+        redaction: "replace-with-secret-reference",
+      },
+    ],
+    actions: [
+      {
+        step_id: longToken,
+        action: "fill",
+        locator: { kind: "css", selector: `#${longValue}` },
+        value: { source: "secret", secret_id: longToken },
+      },
+    ],
+    storage: {
+      cookies: [
+        {
+          name: longToken,
+          value: {
+            source: "literal",
+            value: longValue,
+            classification: "public",
+          },
+          destination: { url: "https://app.example.test/" },
+          http_only: false,
+          secure: true,
+          same_site: "Lax",
+        },
+      ],
+    },
+    request_replay: {
+      mode: "exact",
+      unmatched: "abort",
+      routes: [
+        {
+          route_id: longToken,
+          method: "GET",
+          request: { url: "https://app.example.test/" },
+          response: {
+            kind: "response",
+            status: 200,
+            headers: [
+              {
+                name: longToken,
+                value: {
+                  source: "literal",
+                  value: longValue,
+                  classification: "public",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  expect(result.actions[0]?.step_id).toBe(longToken);
+  expect(
+    result.actions[0]?.action === "fill" &&
+      result.actions[0].value.source === "secret"
+      ? result.actions[0].value.secret_id
+      : undefined,
+  ).toBe(longToken);
+  expect(result.storage.cookies[0]?.name).toBe(longToken);
+  expect(result.secrets[0]?.environment_variable).toBe(longEnvironmentVariable);
+  const replayRoute =
+    result.request_replay.mode === "exact"
+      ? result.request_replay.routes[0]
+      : undefined;
+  expect(
+    replayRoute?.response.kind === "response"
+      ? replayRoute.response.headers[0]?.name
+      : undefined,
+  ).toBe(longToken);
+});
+
+it("accepts caller-selected viewport sizes and click counts without ceilings", () => {
+  const input = {
+    browser: {
+      mode: "launch",
+      executable_path: "/opt/chromium",
+      headless: true,
+      user_data: "temporary-owned",
+      cleanup: "close-and-delete-profile",
+    },
+    start_url: { url: "https://app.example.test/" },
+    allowed_origins: ["https://app.example.test"],
+    environment: {
+      viewport: { width: 20_000, height: 10_000, device_scale_factor: 8 },
+    },
+    actions: [
+      {
+        step_id: "many-clicks",
+        action: "click",
+        locator: { kind: "css", selector: "#item" },
+        click_count: 4,
+      },
+    ],
+  };
+
+  const parsed = browserScenarioSchema.parse(input);
+  expect(parsed.environment.viewport).toEqual({
+    width: 20_000,
+    height: 10_000,
+    device_scale_factor: 8,
+  });
+  expect(parsed.actions[0]).toMatchObject({ click_count: 4 });
+});

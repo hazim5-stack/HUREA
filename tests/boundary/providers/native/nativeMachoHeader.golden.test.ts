@@ -1,0 +1,54 @@
+import { expect, it } from "vitest";
+
+import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
+import { parseOtoolLoadCommands } from "../../../../src/native/parsers/otool.js";
+import {
+  NativeFixtureRunner,
+  nativeFixture,
+  nativeMachoTarget,
+} from "../../../fixtures/nativeCommands.js";
+
+it("collects the actual Mach header alongside the native load commands", async () => {
+  // The provider always invokes `otool -h -l`, which the runner resolves
+  // via the "otool:-h" key; no bare `otool` override is needed.
+  const runner = new NativeFixtureRunner({
+    "otool:-h": await nativeFixture(
+      "native-macho-header/otool-header-load.txt",
+    ),
+  });
+  const client = new NativeMacOSProvider(runner, "darwin").createClient(
+    nativeMachoTarget("/owned/fixture"),
+  );
+  const result = await client.execute("inspect_macho", {});
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.result).toMatchObject({
+    file_type: "2",
+    flags: ["0x00200085"],
+    segments: {
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "__TEXT" }),
+      ]),
+    },
+  });
+});
+
+it("does not reinterpret segment and section flags as Mach header flags", async () => {
+  const load = parseOtoolLoadCommands(
+    await nativeFixture("native-macho-header/otool-header-load.txt"),
+  );
+  expect(load.flags).toEqual(["0x00200085"]);
+  expect(load.commands.some((command) => command.fields.flags === 0)).toBe(
+    true,
+  );
+});
+
+it("keeps multi-word field names such as time stamp intact", async () => {
+  const load = parseOtoolLoadCommands(await nativeFixture("otool-load.txt"));
+  const stamped = load.commands.filter(
+    (command) => "time stamp" in command.fields,
+  );
+  expect(stamped.length).toBeGreaterThan(0);
+  expect(load.commands.some((command) => "time" in command.fields)).toBe(false);
+  expect(stamped[0]?.fields["time stamp"]).toMatch(/^2 Thu Jan/);
+});
