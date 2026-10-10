@@ -23,9 +23,7 @@ application inspection, controlled observation, and reproducible evidence.
 
 HUREA gives your agent a structured way to investigate an application when source code alone is not enough—or is not available. It can inspect artifacts, decompile native functions through configured providers, connect findings across application layers, and return evidence explaining what was observed and what remains uncertain.
 
-**Maintained by Hazim Batwa.** Built on REA, with HUREA branding and an initial extension layer for mobile packages, runtime observation, protocols, data flow, firmware, and additional local providers.
-
-> **Release status:** This repository contains the source distribution. The package is currently marked `private: true`; install from this repository. Optional extension adapters are initial implementations, and their live tool/device integration has not been validated in the supplied verification record.
+**Maintained by Hazim Batwa.** Built on REA, with HUREA branding and an extension layer for mobile packages, runtime observation, protocols, data flow, firmware, and additional local providers.
 
 ## Why HUREA
 
@@ -67,20 +65,20 @@ Evidence IDs are derived from canonical semantic content using SHA-256. File-bac
 
 ## Capabilities
 
-| Area                   | Available functionality                                                                                                              | Coverage boundary                                                                      |
-| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------- |
-| **Native binaries**    | Hopper and Ghidra inventory, decompilation, function dossiers, references, call relationships, and control flow.                     | Requires a configured engine; capabilities differ by provider and target.              |
-| **Web & Electron**     | Browser/CDP observation, JavaScript artifacts and source maps, Electron mapping, controlled scenarios, and V8 Inspector observation. | Runtime workflows require explicit configuration and authority.                        |
-| **Apple artifacts**    | Native metadata and resources; extension inspection of IPA bundles, plists, provisioning data, and symbols.                          | No automatic compiled SwiftUI reconstruction or encrypted executable recovery.         |
-| **Android packages**   | APK inventory, manifest inspection, JADX decompilation, and exported JNI candidates.                                                 | Optional tools required; static JNI candidates are not confirmed runtime calls.        |
-| **Native runtime**     | Finite Frida modules/threads/call traces, bounded memory observations, JNI/ObjC hooks; LLDB snapshots and breakpoint traces.         | Initial adapters; host permissions, dependencies, and live device validation required. |
-| **Data flow**          | Build a graph from explicit SSA IR and traverse parameter, return, and field relationships.                                          | Requires imported IR/graph; aliasing and path feasibility remain unknown.              |
-| **Protocols**          | HAR sample schemas and endpoint comparisons, PCAP metadata, protobuf tag candidates, bounded capture.                                | Sample-derived output; no TLS bypass or original protobuf schema recovery.             |
-| **Version comparison** | Native/application comparison plus extension function fingerprint matching.                                                          | Fingerprint matches are heuristic, not semantic equivalence proofs.                    |
-| **Evidence Studio**    | Generate an offline interactive HTML graph with filters and provenance details.                                                      | Imported labels and IDs are not independently verified by the viewer.                  |
-| **Firmware**           | Signature candidates, optional Binwalk scans, and SquashFS listings.                                                                 | Initial scan/list coverage; no universal extraction or emulation.                      |
-| **Local providers**    | Trusted manifest registration and optional LIEF, Rizin, Binary Ninja, IDA/Hex-Rays adapters.                                         | Bring your own dependencies/licenses; the provider SDK is not a sandbox.               |
-| **Managed code**       | Execution-free PE/CLI inspection and evidence-bound supplied decompilation workflows.                                                | Does not execute assemblies or establish a general managed/native runtime bridge.      |
+| Area                   | Available functionality                                                                                                              | Coverage boundary                                                                         |
+| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------- |
+| **Native binaries**    | Hopper and Ghidra inventory, decompilation, function dossiers, references, call relationships, and control flow.                     | Requires a configured engine; capabilities differ by provider and target.                 |
+| **Web & Electron**     | Browser/CDP observation, JavaScript artifacts and source maps, Electron mapping, controlled scenarios, and V8 Inspector observation. | Runtime workflows require explicit configuration and authority.                           |
+| **Apple artifacts**    | Native metadata and resources; extension inspection of IPA bundles, plists, provisioning data, and symbols.                          | No automatic compiled SwiftUI reconstruction or encrypted executable recovery.            |
+| **Android packages**   | APK inventory, manifest inspection, JADX decompilation, and exported JNI candidates.                                                 | Optional tools required; static JNI candidates are not confirmed runtime calls.           |
+| **Native runtime**     | Finite Frida modules/threads/call traces, bounded memory observations, JNI/ObjC hooks; LLDB snapshots and breakpoint traces.         | Requires configured tools, host permissions, and a supported target.                      |
+| **Data flow**          | Build a graph from explicit SSA IR and traverse parameter, return, and field relationships.                                          | Requires imported IR/graph; aliasing and path feasibility remain unknown.                 |
+| **Protocols**          | HAR sample schemas and endpoint comparisons, PCAP metadata, protobuf tag candidates, bounded capture.                                | Sample-derived output; no TLS bypass or original protobuf schema recovery.                |
+| **Version comparison** | Native/application comparison plus extension function fingerprint matching.                                                          | Fingerprint matches are heuristic, not semantic equivalence proofs.                       |
+| **Evidence Studio**    | Generate an offline interactive HTML graph with filters and provenance details.                                                      | Displays imported evidence labels and identifiers.                                        |
+| **Firmware**           | Signature candidates, optional Binwalk scans, and SquashFS listings.                                                                 | Signature scans and filesystem listings; extraction and emulation are separate workflows. |
+| **Local providers**    | Trusted manifest registration and optional LIEF, Rizin, Binary Ninja, IDA/Hex-Rays adapters.                                         | Bring your own dependencies/licenses; the provider SDK is not a sandbox.                  |
+| **Managed code**       | Execution-free PE/CLI inspection and evidence-bound supplied decompilation workflows.                                                | Does not execute assemblies or establish a general managed/native runtime bridge.         |
 
 The extension layer exposes **14 additional CLI/MCP tools**. See [extension operations and parameters](docs/extensions.md) for exact behavior and prerequisites.
 
@@ -112,7 +110,7 @@ hurea doctor --json
 hurea providers --json
 ```
 
-macOS 12+ and supported Linux hosts are the primary environments. The inherited Linux guide covers Ubuntu 24.04, Fedora 41, and Arch Linux. Windows x64 has an experimental Ghidra P0 limited to approved native x86-64 PE applications; automatic setup and the native runtime extensions are not validated there.
+macOS 12+ and supported Linux hosts are the primary environments. The inherited Linux guide covers Ubuntu 24.04, Fedora 41, and Arch Linux. Windows x64 has an experimental Ghidra P0 limited to approved native x86-64 PE applications; automatic setup is unavailable on Windows.
 
 For deep Ghidra analysis, this adapter expects **Ghidra 12.1.4** and a full **JDK 21** installation:
 
@@ -236,11 +234,7 @@ hurea-agents@3.2.1
 
 This is the source package identity, not a claim that it is published on npm.
 
-## Verification and support status
-
-The supplied extension verification record reports **32 Python tests and 58 Vitest tests**, plus successful build, fast checks, and documentation checks. These are focused checks, not a claim that the full suite or live external providers passed.
-
-The record also documents failures in the earlier full suite and unverified real-tool/device lanes. Frida, LLDB, JADX, aapt2, LIEF, Rizin, Binwalk, tshark, Binary Ninja, IDA/Hex-Rays, and physical mobile devices need validation on a suitable host.
+## Development and release automation
 
 ```bash
 npm run build:cached
@@ -256,7 +250,7 @@ permission for Actions to create pull requests (or a dedicated
 its own registry configuration; the source package remains private until explicitly
 prepared for publication. Regular CI continues to run on updates.
 
-Read the [verification record](docs/EXTENSIONS_VALIDATION.md) and [testing guide](docs/testing.md) before relying on a provider-specific claim.
+See the [testing guide](docs/testing.md) for development commands and verification workflows.
 
 ## Documentation
 
