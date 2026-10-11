@@ -3,7 +3,7 @@
 This update adds 14 optional CLI/MCP tools covering the proposed expansion areas.
 It is an initial implementation with explicit coverage boundaries, not a claim of complete source recovery or universal device support.
 Existing Hopper, Ghidra, browser, Apple native metadata and managed providers remain available.
-Original REA credits and MIT terms remain intact.
+License terms and source attribution are documented in LICENSE.
 
 ## Running an operation
 

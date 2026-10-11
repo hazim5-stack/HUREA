@@ -2,12 +2,16 @@
 
 **Hazim Universal Reverse Engineering for Anything**
 
-A local CLI and MCP toolkit for investigating software, native binaries, application artifacts, and observed behavior through reproducible evidence.
+Developed and maintained by **Hazim Batwa**.
 
-**Brand owner and fork maintainer: Hazim Batwa.**
+HUREA is a local CLI and MCP toolkit for investigating native binaries,
+application artifacts, mobile packages, protocols, firmware, and observed
+runtime behavior through reproducible evidence.
+
+It combines analysis providers and structured investigation workflows to help
+agents explain, compare, document, and recreate software behavior.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
-
-<small>Based on REA — Reverse Engineer Anything, originally developed by [morluto](https://github.com/morluto/rea). Original copyright and MIT notice are preserved. HUREA branding and modifications © 2026 Hazim Batwa.</small>
+Distributed under the [MIT License](LICENSE). Copyright and source attribution
+are documented in the license.

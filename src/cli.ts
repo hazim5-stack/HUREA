@@ -53,16 +53,14 @@ export const createCli = (): CliInstance => {
   });
 
   cli.command(CLI_COMMANDS.about, {
-    description: "Show HUREA identity, license, and original developer credits",
+    description: "Show HUREA identity and license",
     run: () => ({
       name: PRODUCT_IDENTITY.displayName,
       fullName: PRODUCT_IDENTITY.fullName,
       version: PRODUCT_IDENTITY.packageVersion,
       maintainer: PRODUCT_IDENTITY.maintainer,
       license: "MIT",
-      originalDeveloper: PRODUCT_IDENTITY.originalDeveloper,
-      originalProject: PRODUCT_IDENTITY.originalProject,
-      originalSource: PRODUCT_IDENTITY.originalSource,
+      licenseFile: "LICENSE",
     }),
   });
 

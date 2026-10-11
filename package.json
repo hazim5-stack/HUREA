@@ -45,7 +45,7 @@
     "ABOUT.md",
     "NOTICE.md",
     "README_ar.md",
-    "HUREA_REBRAND.md",
+    "HUREA_GUIDE.md",
     "docs/extensions.md",
     "docs/EXTENSIONS_VALIDATION.md",
     "README_NEW_FEATURES_AR.md",
@@ -213,11 +213,5 @@
     "yaml": "2.9.0"
   },
   "author": "Hazim Batwa",
-  "contributors": [
-    {
-      "name": "morluto",
-      "url": "https://github.com/morluto"
-    }
-  ],
   "private": true
 }

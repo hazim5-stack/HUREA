@@ -21,7 +21,7 @@ inventory check passed; optional Python cache files are excluded from distributi
 These checks do not certify optional external tools or physical devices.
 
 The first full `npm run check:pr` test run recorded 1,863 passes, 62 failures and
-4 skips. It exposed an old REA environment token in a fixture, missing extension
+4 skips. It exposed a legacy environment token in a fixture, missing extension
 README rows/CLI argument guidance and inconsistent extension annotations. Those
 were corrected and their targeted lanes passed in the final 90-test verification.
 The full suite also encountered `listen EPERM` on Unix sockets, unavailable live

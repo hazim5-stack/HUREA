@@ -1,5 +1,5 @@
 > **HUREA — Hazim Universal Reverse Engineering for Anything**
-> هوية المشروع وإدارة النسخة: **Hazim Batwa**.
+> تطوير المشروع وصيانته: **Hazim Batwa**.
 > هذه النسخة محلية؛ أوامر npm المنشورة أدناه أمثلة لما بعد النشر. للتشغيل الآن:
 
 ```bash
@@ -10,7 +10,7 @@ hurea --help
 hurea setup
 ```
 
-[حول المشروع](ABOUT.md) · [تفاصيل تغيير الاسم](HUREA_REBRAND.md)
+[حول المشروع](ABOUT.md) · [دليل التشغيل](HUREA_GUIDE.md)
 
 <div align="center">
 
@@ -289,8 +289,8 @@ export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch64"]'
 ## المشروع
 
 - [حزمة npm](https://www.npmjs.com/package/hurea-agents)
-- [GitHub](https://github.com/morluto/rea)
-- [القضايا والطلبات](https://github.com/morluto/rea/issues)
+- [GitHub](https://github.com/hazim5-stack/HUREA)
+- [القضايا والطلبات](https://github.com/hazim5-stack/HUREA/issues)
 - [Hopper Disassembler](https://www.hopperapp.com/)
 - [سياسة الأمان](SECURITY.md)
 
@@ -299,8 +299,6 @@ export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch64"]'
 [MIT](LICENSE)
 
 ---
-
-<small>Original application: REA — Reverse Engineer Anything, developed by [morluto](https://github.com/morluto/rea). Original MIT copyright is preserved in [LICENSE](LICENSE). HUREA branding and modifications © 2026 Hazim Batwa.</small>
 
 ## الإضافات الجديدة
 

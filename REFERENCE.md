@@ -1,6 +1,6 @@
 > **HUREA — Hazim Universal Reverse Engineering for Anything**
-> Branding and fork maintenance: **Hazim Batwa**.
-> This fork is local and unpublished. Registry commands below are future publishing examples. To run this copy:
+> Development and maintenance: **Hazim Batwa**.
+> Install this source distribution from the HUREA repository. Registry commands below are future publishing examples. To run this copy:
 
 ```bash
 npm ci
@@ -10,7 +10,7 @@ hurea --help
 hurea setup
 ```
 
-[About](ABOUT.md) · [Rebrand notes](HUREA_REBRAND.md)
+[About](ABOUT.md) · [Getting started](HUREA_GUIDE.md)
 
 <div align="center">
 
@@ -821,15 +821,13 @@ verifier after the survival check.
 
 ## Project links
 
-[npm](https://www.npmjs.com/package/hurea-agents) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/) · [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
+[npm](https://www.npmjs.com/package/hurea-agents) · [Issues](https://github.com/hazim5-stack/HUREA/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/) · [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
 
 ## License
 
 [MIT](LICENSE)
 
 ---
-
-<small>Original application: REA — Reverse Engineer Anything, developed by [morluto](https://github.com/morluto/rea). Original MIT copyright is preserved in [LICENSE](LICENSE). HUREA branding and modifications © 2026 Hazim Batwa.</small>
 
 ## HUREA extension tools
 

@@ -96,7 +96,7 @@ Run the full checks, isolated package verifier, package dry run, and two-target 
 
 ```bash
 npm pack
-npm exec --yes --package ./morluto-hurea-0.1.0.tgz -- hurea --help
+npm exec --yes --package ./hurea-agents-3.2.1.tgz -- hurea --help
 ```
 
 Publish the public package:

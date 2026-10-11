@@ -23,7 +23,7 @@ application inspection, controlled observation, and reproducible evidence.
 
 HUREA gives your agent a structured way to investigate an application when source code alone is not enough—or is not available. It can inspect artifacts, decompile native functions through configured providers, connect findings across application layers, and return evidence explaining what was observed and what remains uncertain.
 
-**Maintained by Hazim Batwa.** Built on REA, with HUREA branding and an extension layer for mobile packages, runtime observation, protocols, data flow, firmware, and additional local providers.
+**Developed and maintained by Hazim Batwa.** HUREA brings together mobile package analysis, runtime observation, protocols, data flow, firmware inspection, and local analysis providers.
 
 ## Why HUREA
 
@@ -243,7 +243,7 @@ npm run test:extensions
 npm run check:pr
 ```
 
-Release automation is opt-in for this fork. To enable it, set the repository
+Release automation is opt-in for HUREA. To enable it, set the repository
 Actions variable `HUREA_RELEASE_AUTOMATION_ENABLED` to `true` and configure
 permission for Actions to create pull requests (or a dedicated
 `RELEASE_PLEASE_TOKEN` with the required access). npm/MCP publication also needs
@@ -288,8 +288,6 @@ See the [testing guide](docs/testing.md) for development commands and verificati
 ## About and license
 
 **HUREA — Hazim Universal Reverse Engineering for Anything**
-Branding and fork maintenance: **Hazim Batwa**.
+Development and maintenance: **Hazim Batwa**.
 
-Distributed under the [MIT License](LICENSE). Original copyright and license notices remain intact; HUREA modification and branding attribution is included in the license.
-
-<sub>Based on <a href="https://github.com/morluto/rea">REA — Reverse Engineer Anything</a>, originally developed by <a href="https://github.com/morluto">morluto</a>. See <a href="ABOUT.md">About</a> and <a href="NOTICE.md">Notice</a> for attribution.</sub>
+Distributed under the [MIT License](LICENSE). See the license for copyright and source attribution.

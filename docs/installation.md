@@ -1,4 +1,4 @@
-> HUREA is a local unpublished fork. Use the local instructions in [HUREA_REBRAND.md](../HUREA_REBRAND.md). Registry and public release examples below are templates for a future publication. `local.hazim/hurea` is a local manifest label, not a public registration.
+> Install HUREA from its source repository using [the getting-started guide](../HUREA_GUIDE.md). Registry examples below describe package publishing and registration.
 
 # Installation and setup
 

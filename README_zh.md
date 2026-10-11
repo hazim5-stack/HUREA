@@ -1,6 +1,6 @@
 > **HUREA — Hazim Universal Reverse Engineering for Anything**
-> Branding and fork maintenance: **Hazim Batwa**.
-> This fork is local and unpublished. Registry commands below are future publishing examples. To run this copy:
+> Development and maintenance: **Hazim Batwa**.
+> Install this source distribution from the HUREA repository. Registry commands below are future publishing examples. To run this copy:
 
 ```bash
 npm ci
@@ -10,7 +10,7 @@ hurea --help
 hurea setup
 ```
 
-[About](ABOUT.md) · [Rebrand notes](HUREA_REBRAND.md)
+[About](ABOUT.md) · [Getting started](HUREA_GUIDE.md)
 
 <div align="center">
 
@@ -275,5 +275,3 @@ HUREA 不提供托管分析服务，而是通过本地 Unix 套接字把操作�
 [MIT](LICENSE)
 
 ---
-
-<small>Original application: REA — Reverse Engineer Anything, developed by [morluto](https://github.com/morluto/rea). Original MIT copyright is preserved in [LICENSE](LICENSE). HUREA branding and modifications © 2026 Hazim Batwa.</small>
